@@ -19,10 +19,13 @@
   :root {
     --bg:#0f1216; --panel:#171b21; --line:#262c35; --fg:#e6e9ee;
     --muted:#9aa4b2; --accent:#4f9cf9; --soon:#34d399; --warn:#fbbf24;
-    --chip:#1f242c; --chipPast:#141821;
+    --chip:#1f242c; --chipPast:#141821; --onAccent:#0e1a2b;  /* 밝은 파랑 배경 위 글자(대비 확보) */
   }
   @media (prefers-color-scheme: light) {
-    :root { --bg:#f5f6f8; --panel:#fff; --line:#e3e6ea; --fg:#1a1d21; --muted:#6b7280; --chip:#eef1f5; --chipPast:#f4f5f7; }
+    /* 밝은 배경에서 대비 확보(WCAG AA): 파랑·초록·노랑을 진한 톤으로 교체 */
+    :root { --bg:#f5f6f8; --panel:#fff; --line:#e3e6ea; --fg:#1a1d21; --muted:#6b7280; --chip:#eef1f5; --chipPast:#f4f5f7;
+            --accent:#2563eb; --soon:#047857; --warn:#b45309; --onAccent:#fff; }
+    .chips .chip.now, .nmline .badge.off { color:#fff; }  /* 뒤에 오는 동일 특이도 규칙보다 높여야 적용됨 */
   }
   * { box-sizing:border-box; }
   body { margin:0; background:var(--bg); color:var(--fg);
@@ -32,7 +35,7 @@
   h1 { font-size:19px; margin:0; }
   .day { color:var(--muted); font-size:13px; }
   .bar { display:flex; align-items:center; gap:10px; margin:12px 0 18px; }
-  button { background:var(--accent); color:#fff; border:0; border-radius:8px; padding:8px 14px; font-size:14px; font-weight:600; cursor:pointer; }
+  button { background:var(--accent); color:var(--onAccent); border:0; border-radius:8px; padding:8px 14px; font-size:14px; font-weight:600; cursor:pointer; }
   .updated { color:var(--muted); font-size:12px; margin-left:auto; }
   .ghead { font-size:17px; font-weight:800; margin:26px 0 4px; padding:2px 0 2px 10px; border-left:4px solid var(--accent); }
   .ghead:first-child { margin-top:0; }
@@ -53,7 +56,7 @@
   details[open] summary::before { content:"▾ "; }
   .ttbar { display:flex; gap:6px; margin:12px 0 10px; }
   .seg { background:transparent; color:var(--muted); border:1px solid var(--line); border-radius:7px; padding:4px 12px; font-size:12px; font-weight:600; cursor:pointer; }
-  .seg.on { background:var(--accent); color:#fff; border-color:var(--accent); }
+  .seg.on { background:var(--accent); color:var(--onAccent); border-color:var(--accent); }
   .chips { display:flex; flex-wrap:wrap; gap:6px; }
   .chip { flex:0 0 calc((100% - 30px) / 6); box-sizing:border-box; height:28px; line-height:28px; text-align:center;
           font-size:12.5px; font-weight:600; font-variant-numeric:tabular-nums;
@@ -67,7 +70,7 @@
   /* ---------- 노선도 (탭 + 세로 라인) ---------- */
   .rtabs { display:flex; gap:6px; margin:0 0 12px; }
   .rtab { background:transparent; color:var(--muted); border:1px solid var(--line); border-radius:8px; padding:7px 16px; font-size:13px; font-weight:700; cursor:pointer; }
-  .rtab.on { background:var(--accent); color:#fff; border-color:var(--accent); }
+  .rtab.on { background:var(--accent); color:var(--onAccent); border-color:var(--accent); }
   .board { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:6px 14px; }
   .stoprow { display:grid; grid-template-columns:26px 1fr; cursor:pointer; }
   .rail { position:relative; }
@@ -86,7 +89,7 @@
   .nmline { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
   .nm { font-size:13.5px; font-weight:600; }
   .stoprow.on-board .nm, .stoprow.off-board .nm { font-weight:800; }
-  .badge { font-size:10.5px; font-weight:700; color:#fff; background:var(--accent); border-radius:5px; padding:1px 6px; }
+  .badge { font-size:10.5px; font-weight:700; color:var(--onAccent); background:var(--accent); border-radius:5px; padding:1px 6px; }
   .badge.off { background:var(--soon); color:#08130d; }
   .rnext { display:none; font-size:12.5px; color:var(--muted); margin-top:2px; font-variant-numeric:tabular-nums; }
   .stoprow.on-board .rnext, .stoprow.open .rnext { display:block; }  /* 도착 예정은 타는 곳만 상시 표시, 나머지는 펼쳤을 때 */
@@ -152,33 +155,63 @@ const BASE = "https://icnplus.airport.kr:11040/api/transportation/shuttle";
 const API = `${BASE}/buses/stops`;
 
 const toMin = (hhmm) => { const s = String(hhmm).padStart(4,"0"); return parseInt(s.slice(0,2),10)*60 + parseInt(s.slice(2),10); };
-const isWeekend = (d) => [0,6].includes(d.getDay());
+// 공휴일엔 주말 시간표 적용. 대체공휴일 포함, 매년 말 다음 해 목록 추가(사용법.md 유지보수 항목).
+const HOLIDAYS = new Set([
+  "2026-01-01","2026-02-16","2026-02-17","2026-02-18","2026-03-01","2026-03-02",
+  "2026-05-01","2026-05-05","2026-05-24","2026-05-25","2026-06-03","2026-06-06",
+  "2026-07-17","2026-08-15","2026-08-17",
+  "2026-09-24","2026-09-25","2026-09-26","2026-10-03","2026-10-05","2026-10-09","2026-12-25",
+  "2027-01-01","2027-02-06","2027-02-07","2027-02-08","2027-02-09","2027-03-01",
+  "2027-05-01","2027-05-05","2027-05-13","2027-06-06",
+  "2027-07-17","2027-07-19","2027-08-15","2027-08-16",   // 노동절은 대체공휴일 미적용(별도 법률), 제헌절은 국경일이라 적용
+  "2027-09-14","2027-09-15","2027-09-16","2027-10-03","2027-10-04","2027-10-09","2027-10-11",
+  "2027-12-25","2027-12-27",
+]);
+const dateKey = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+const isWeekend = (d) => [0,6].includes(d.getDay()) || HOLIDAYS.has(dateKey(d));  // 주말 또는 공휴일
 const cache = {};        // stopId -> { weekday:[분], weekend:[분] }
 const dayView = {};      // stopId -> 'weekday' | 'weekend' (전체 시간표에서 선택한 요일)
 const routeStops = {};   // rteId -> [{ stopId, name }]
 let routeTab = ROUTES[0].rteId;
+let loadError = "";      // 카드(핵심) 수신 실패 — tick()이 갱신 시각으로 덮지 않도록 유지
+let partialError = "";   // 노선도 일부 정류장/목록 수신 실패 — 갱신 시각 옆에 병기
+const failedStops = new Set();  // 시간표 수신에 실패한 노선도 정류장
 
 async function loadTimetable(stopId) {
   const res = await fetch(`${API}/${stopId}`, { headers:{ Accept:"application/json" }, cache:"no-store" });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const d = JSON.parse(await res.text());
   const data = (d && d.data) || {};
-  const map = (arr) => (arr || []).map((t) => toMin(t.time)).sort((a,b)=>a-b);
+  // 잘못된 stopId도 200 + status:success + 빈 배열로 오므로 내용까지 검증
+  if (d.code !== 200 || d.status !== "success" ||
+      !Array.isArray(data.weekdayTimes) || !Array.isArray(data.weekendTimes) ||
+      (!data.weekdayTimes.length && !data.weekendTimes.length)) throw new Error(`시간표 없음(${stopId})`);
+  const map = (arr) => (arr || []).map((t) => toMin(t.time)).filter(Number.isFinite).sort((a,b)=>a-b);
   cache[stopId] = { weekday: map(data.weekdayTimes), weekend: map(data.weekendTimes) };
+  failedStops.delete(stopId);
 }
 
 async function loadRouteStops(rteId) {
   const res = await fetch(`${BASE}/selectShuttleStops/?rteId=${rteId}&locale=ko_KR`, { headers:{ Accept:"application/json" }, cache:"no-store" });
-  const arr = JSON.parse(await res.text()) || [];
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const arr = JSON.parse(await res.text());
+  if (!Array.isArray(arr) || !arr.length) throw new Error(`정류장 목록 없음(${rteId})`);  // 잘못된 rteId도 200 + []
   arr.sort((a,b) => parseInt(a.seq,10) - parseInt(b.seq,10));
   routeStops[rteId] = arr.map((s) => ({ stopId: s.stopId, name: s.stopNm }));
 }
 
-// 노선 전체 정류장 시간표 확보 (force = 캐시 무시 재수신)
+// 노선 전체 정류장 시간표 확보 (force = 캐시 무시 재수신). 실패는 failedStops에 집계.
 async function ensureRouteTimetables(rteId, force = false) {
   const stops = routeStops[rteId] || [];
   await Promise.all(stops
     .filter((s) => force || !cache[s.stopId])
-    .map((s) => loadTimetable(s.stopId).catch(() => {})));
+    .map((s) => loadTimetable(s.stopId).catch(() => { if (!cache[s.stopId]) failedStops.add(s.stopId); })));
+  updatePartialError();
+}
+
+function updatePartialError() {
+  const n = failedStops.size + ROUTES.filter((r) => !routeStops[r.rteId]).length;
+  partialError = n ? "일부 노선 정보 수신 실패" : "";
 }
 
 // 어제/오늘/내일 시간표를 절대 시각으로 (자정 넘김 처리)
@@ -327,7 +360,7 @@ function buildRouteBoard() {
     row.innerHTML =
       `<div class="rail"><span class="dot"></span></div>` +
       `<div class="rinfo">` +
-        `<div class="nmline"><span class="nm">${s.name}</span>` +
+        `<div class="nmline"><span class="nm"></span>` +
         (onB ? `<span class="badge">타는 곳</span>` : "") +
         (offB ? `<span class="badge off">내리는 곳</span>` : "") + `</div>` +
         `<div class="rnext" id="rnext-${s.stopId}">…</div>` +
@@ -339,6 +372,7 @@ function buildRouteBoard() {
           `<div class="chips" id="rtt-${s.stopId}"></div>` +
         `</div>` +
       `</div>`;
+    row.querySelector(".nm").textContent = s.name;  // API에서 온 정류장명은 HTML로 해석되지 않게
     row.addEventListener("click", () => {
       row.classList.toggle("open");
       if (row.classList.contains("open")) renderRouteChips(s.stopId, new Date());
@@ -358,7 +392,10 @@ function buildRouteBoard() {
 function renderRouteNext(stopId, now) {
   const el = document.getElementById(`rnext-${stopId}`);
   if (!el) return;
-  if (!cache[stopId]) { el.textContent = "시간표 불러오는 중…"; return; }
+  if (!cache[stopId]) {
+    el.textContent = failedStops.has(stopId) ? "수신 실패 — 새로고침을 눌러주세요" : "시간표 불러오는 중…";
+    return;
+  }
   const nx = nextBuses(stopId, now, 2);
   if (!nx.length) { el.textContent = "운행 정보 없음"; return; }
   const etaMin = Math.round((nx[0] - now) / 60000);
@@ -405,8 +442,9 @@ function tick() {
   document.getElementById("dayType").textContent = "오늘: " + (isWeekend(now) ? "주말·공휴일" : "평일");
   for (const s of STOPS) { renderNext(s.stopId, now); renderChips(s.stopId, now); }
   renderRouteAll(now);
-  document.getElementById("updated").textContent =
-    "갱신 " + now.toLocaleTimeString("ko-KR", { hour:"2-digit", minute:"2-digit" });
+  document.getElementById("updated").textContent = loadError ||
+    ("갱신 " + now.toLocaleTimeString("ko-KR", { hour:"2-digit", minute:"2-digit" }) +
+     (partialError ? " · " + partialError : ""));
 }
 
 async function reload() {
@@ -414,11 +452,16 @@ async function reload() {
   btn.disabled = true; btn.textContent = "불러오는 중…";
   try {
     const jobs = STOPS.map((s) => loadTimetable(s.stopId));
-    jobs.push(...ROUTES.filter((r) => !routeStops[r.rteId]).map((r) => loadRouteStops(r.rteId).catch(() => {})));
+    jobs.push(...ROUTES.map((r) => loadRouteStops(r.rteId).catch(() => {})));  // 목록도 재수신, 실패는 부분 실패로 집계
     await Promise.all(jobs);
+    loadError = "";
   }
-  catch (e) { document.getElementById("updated").textContent = "불러오기 실패: " + (e.message || e); }
-  if (!document.querySelector("#routeBoard .stoprow")) buildRouteBoard();
+  catch (e) { loadError = "불러오기 실패: " + (e.message || e); }
+  // 정류장 구성(ID·이름)이 바뀌었을 때만 노선도 재생성 (펼침 상태 보존)
+  const rendered = [...document.querySelectorAll("#routeBoard .stoprow")]
+    .map((r) => r.dataset.stop + ":" + r.querySelector(".nm").textContent).join("|");
+  const current = (routeStops[routeTab] || []).map((s) => s.stopId + ":" + s.name).join("|");
+  if (!routeStops[routeTab] || rendered !== current) buildRouteBoard();
   await ensureRouteTimetables(routeTab, true);   // 활성 탭 전체 정류장 시간표(재수신 포함)
   btn.disabled = false; btn.textContent = "새로고침";
   tick();

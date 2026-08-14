@@ -15,10 +15,13 @@
   :root {
     --bg:#0f1216; --panel:#171b21; --line:#262c35; --fg:#e6e9ee;
     --muted:#9aa4b2; --accent:#4f9cf9; --soon:#34d399; --warn:#fbbf24;
-    --chip:#1f242c; --chipPast:#141821;
+    --chip:#1f242c; --chipPast:#141821; --onAccent:#0e1a2b;  /* 밝은 파랑 배경 위 글자(대비 확보) */
   }
   @media (prefers-color-scheme: light) {
-    :root { --bg:#f5f6f8; --panel:#fff; --line:#e3e6ea; --fg:#1a1d21; --muted:#6b7280; --chip:#eef1f5; --chipPast:#f4f5f7; }
+    /* 밝은 배경에서 대비 확보(WCAG AA): 파랑·초록·노랑을 진한 톤으로 교체 */
+    :root { --bg:#f5f6f8; --panel:#fff; --line:#e3e6ea; --fg:#1a1d21; --muted:#6b7280; --chip:#eef1f5; --chipPast:#f4f5f7;
+            --accent:#2563eb; --soon:#047857; --warn:#b45309; --onAccent:#fff; }
+    .chips .chip.now { color:#fff; }  /* 뒤에 오는 .chip.now 규칙보다 특이도 높여야 적용됨 */
   }
   * { box-sizing:border-box; }
   body { margin:0; background:var(--bg); color:var(--fg);
@@ -28,7 +31,7 @@
   h1 { font-size:19px; margin:0; }
   .day { color:var(--muted); font-size:13px; }
   .bar { display:flex; align-items:center; gap:10px; margin:12px 0 18px; }
-  button { background:var(--accent); color:#fff; border:0; border-radius:8px; padding:8px 14px; font-size:14px; font-weight:600; cursor:pointer; }
+  button { background:var(--accent); color:var(--onAccent); border:0; border-radius:8px; padding:8px 14px; font-size:14px; font-weight:600; cursor:pointer; }
   .updated { color:var(--muted); font-size:12px; margin-left:auto; }
   .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:16px 18px; margin-bottom:14px; }
   .route { font-size:13px; color:var(--accent); font-weight:700; }
@@ -46,7 +49,7 @@
   details[open] summary::before { content:"▾ "; }
   .ttbar { display:flex; gap:6px; margin:12px 0 10px; }
   .seg { background:transparent; color:var(--muted); border:1px solid var(--line); border-radius:7px; padding:4px 12px; font-size:12px; font-weight:600; cursor:pointer; }
-  .seg.on { background:var(--accent); color:#fff; border-color:var(--accent); }
+  .seg.on { background:var(--accent); color:var(--onAccent); border-color:var(--accent); }
   .chips { display:flex; flex-wrap:wrap; gap:6px; }
   .chip { flex:0 0 calc((100% - 30px) / 6); box-sizing:border-box; height:28px; line-height:28px; text-align:center;
           font-size:12.5px; font-weight:600; font-variant-numeric:tabular-nums;
@@ -83,15 +86,34 @@ const STOPS = [
 const API = "https://icnplus.airport.kr:11040/api/transportation/shuttle/buses/stops";
 
 const toMin = (hhmm) => { const s = String(hhmm).padStart(4,"0"); return parseInt(s.slice(0,2),10)*60 + parseInt(s.slice(2),10); };
-const isWeekend = (d) => [0,6].includes(d.getDay());
+// 공휴일엔 주말 시간표 적용. 대체공휴일 포함, 매년 말 다음 해 목록 추가(사용법.md 유지보수 항목).
+const HOLIDAYS = new Set([
+  "2026-01-01","2026-02-16","2026-02-17","2026-02-18","2026-03-01","2026-03-02",
+  "2026-05-01","2026-05-05","2026-05-24","2026-05-25","2026-06-03","2026-06-06",
+  "2026-07-17","2026-08-15","2026-08-17",
+  "2026-09-24","2026-09-25","2026-09-26","2026-10-03","2026-10-05","2026-10-09","2026-12-25",
+  "2027-01-01","2027-02-06","2027-02-07","2027-02-08","2027-02-09","2027-03-01",
+  "2027-05-01","2027-05-05","2027-05-13","2027-06-06",
+  "2027-07-17","2027-07-19","2027-08-15","2027-08-16",   // 노동절은 대체공휴일 미적용(별도 법률), 제헌절은 국경일이라 적용
+  "2027-09-14","2027-09-15","2027-09-16","2027-10-03","2027-10-04","2027-10-09","2027-10-11",
+  "2027-12-25","2027-12-27",
+]);
+const dateKey = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+const isWeekend = (d) => [0,6].includes(d.getDay()) || HOLIDAYS.has(dateKey(d));  // 주말 또는 공휴일
 const cache = {};        // stopId -> { weekday:[분], weekend:[분] }
 const dayView = {};      // stopId -> 'weekday' | 'weekend' (전체 시간표에서 선택한 요일)
+let loadError = "";      // 마지막 수신 실패 메시지 — tick()이 갱신 시각으로 덮지 않도록 유지
 
 async function loadTimetable(stopId) {
   const res = await fetch(`${API}/${stopId}`, { headers:{ Accept:"application/json" }, cache:"no-store" });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const d = JSON.parse(await res.text());
   const data = (d && d.data) || {};
-  const map = (arr) => (arr || []).map((t) => toMin(t.time)).sort((a,b)=>a-b);
+  // 잘못된 stopId도 200 + status:success + 빈 배열로 오므로 내용까지 검증
+  if (d.code !== 200 || d.status !== "success" ||
+      !Array.isArray(data.weekdayTimes) || !Array.isArray(data.weekendTimes) ||
+      (!data.weekdayTimes.length && !data.weekendTimes.length)) throw new Error(`시간표 없음(${stopId})`);
+  const map = (arr) => (arr || []).map((t) => toMin(t.time)).filter(Number.isFinite).sort((a,b)=>a-b);
   cache[stopId] = { weekday: map(data.weekdayTimes), weekend: map(data.weekendTimes) };
 }
 
@@ -195,15 +217,15 @@ function tick() {
   const now = new Date();
   document.getElementById("dayType").textContent = "오늘: " + (isWeekend(now) ? "주말·공휴일" : "평일");
   for (const s of STOPS) { renderNext(s.stopId, now); renderChips(s.stopId, now); }
-  document.getElementById("updated").textContent =
+  document.getElementById("updated").textContent = loadError ||
     "갱신 " + now.toLocaleTimeString("ko-KR", { hour:"2-digit", minute:"2-digit" });
 }
 
 async function reload() {
   const btn = document.getElementById("refresh");
   btn.disabled = true; btn.textContent = "불러오는 중…";
-  try { await Promise.all(STOPS.map((s) => loadTimetable(s.stopId))); }
-  catch (e) { document.getElementById("updated").textContent = "불러오기 실패: " + (e.message || e); }
+  try { await Promise.all(STOPS.map((s) => loadTimetable(s.stopId))); loadError = ""; }
+  catch (e) { loadError = "불러오기 실패: " + (e.message || e); }
   btn.disabled = false; btn.textContent = "새로고침";
   tick();
 }
