@@ -4,8 +4,9 @@
   - 용도: 제1합동청사 쪽에 주차하고 제1터미널을 오가는 방문객용. 방향별 2그룹으로 표시.
     · 갈 때: 공항04 국제업무단지 → 제1터미널(3층 8번 하차)
     · 올 때: 공항03 제1터미널 3층 3번/12번 → 국제업무단지(제1합동청사)
-  - 데이터: 인천공항+ 앱 API (icnplus.airport.kr:11040) — 인증 불필요, 고정 시간표(평일/주말)
-  - 실시간 GPS가 아니라 "시간표 기준 다음 버스"를 현재 시각으로 계산합니다.
+  - 아래에 공항03/공항04 탭 노선도: 전체 정류장 + 타는 곳·내리는 곳 강조, 정류장 탭하면 다음 버스·전체 시간표.
+  - 데이터: 인천공항+ 앱 API (icnplus.airport.kr:11040) — 인증 불필요, 고정 시간표(평일/주말).
+    정류장 목록도 API에서 동적 수신(노선 개편 자동 반영). 실시간 GPS 아님.
   - 로컬 파일 의존 없음. 내 정류장 보드는 shuttle.html(배포본 index.html) 참고.
 -->
 <html lang="ko">
@@ -61,6 +62,36 @@
   .chip.now { background:var(--soon); color:#08130d; }
   .err { color:var(--warn); font-size:14px; margin-top:10px; }
   footer { color:var(--muted); font-size:11px; margin-top:14px; line-height:1.6; }
+
+  /* ---------- 노선도 (탭 + 세로 라인) ---------- */
+  .rtabs { display:flex; gap:6px; margin:0 0 12px; }
+  .rtab { background:transparent; color:var(--muted); border:1px solid var(--line); border-radius:8px; padding:7px 16px; font-size:13px; font-weight:700; cursor:pointer; }
+  .rtab.on { background:var(--accent); color:#fff; border-color:var(--accent); }
+  .board { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:6px 14px; }
+  .stoprow { display:grid; grid-template-columns:26px 1fr; cursor:pointer; }
+  .rail { position:relative; }
+  .rail::before { content:""; position:absolute; left:50%; top:0; bottom:0; width:2px; margin-left:-1px; background:var(--line); }
+  .stoprow:first-child .rail::before { top:20px; }
+  .stoprow:last-child .rail::before { bottom:calc(100% - 20px); }
+  .dot { position:absolute; left:50%; top:14px; width:11px; height:11px; margin-left:-5.5px;
+         border-radius:50%; background:var(--panel); border:2.5px solid var(--muted); }
+  .stoprow.on-board .dot { border-color:var(--accent); background:var(--accent); }
+  .stoprow.off-board .dot { border-color:var(--soon); background:var(--soon); }
+  .rinfo { padding:9px 0 9px 8px; border-bottom:1px solid var(--line); min-width:0; }
+  .stoprow:last-child .rinfo { border-bottom:0; }
+  .nmline { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+  .nm { font-size:13.5px; font-weight:600; }
+  .stoprow.on-board .nm, .stoprow.off-board .nm { font-weight:800; }
+  .badge { font-size:10.5px; font-weight:700; color:#fff; background:var(--accent); border-radius:5px; padding:1px 6px; }
+  .badge.off { background:var(--soon); color:#08130d; }
+  .rnext { font-size:12.5px; color:var(--muted); margin-top:2px; font-variant-numeric:tabular-nums; display:none; }
+  .stoprow.open .rnext { display:block; }
+  .rnext b { color:var(--fg); font-size:14px; font-weight:800; }
+  .rnext .eta { font-size:12.5px; }
+  .rexpand { display:none; padding:2px 0 12px 8px; }
+  .stoprow.open .rexpand { display:block; }
+  .rexpand .ttbar { margin-top:8px; }
+  .rexpand .chip { height:26px; line-height:26px; font-size:12px; }
 </style>
 </head>
 <body>
@@ -74,6 +105,12 @@
     <span class="updated" id="updated">—</span>
   </div>
   <div id="cards"></div>
+
+  <div class="ghead">노선 전체 정류장</div>
+  <p class="gnote">파랑 = 타는 곳 · 초록 = 내리는 곳 · 정류장을 누르면 다음 버스와 전체 시간표</p>
+  <div class="rtabs" id="rtabs"></div>
+  <div class="board" id="routeBoard"><div class="err">정류장 불러오는 중…</div></div>
+
   <footer>
     시간표 기준(실시간 GPS 아님) · 자정 이후 편·내일 첫차까지 반영 · 평일/주말 자동 구분.<br />
     공항03은 같은 버스가 3층 3번을 먼저, 3층 12번을 다음에 지나갑니다. 가까운 문에서 타세요.<br />
@@ -100,12 +137,21 @@ const GROUPS = [
   },
 ];
 const STOPS = GROUPS.flatMap((g) => g.stops);
-const API = "https://icnplus.airport.kr:11040/api/transportation/shuttle/buses/stops";
+
+// 노선도 탭: 타는 곳/내리는 곳은 위 그룹 시나리오 기준
+const ROUTES = [
+  { rteId: "00002", label: "공항03", board: ["00002009", "00002010"], alight: ["00002012"] },
+  { rteId: "00003", label: "공항04", board: ["00003013"], alight: ["00003015"] },
+];
+const BASE = "https://icnplus.airport.kr:11040/api/transportation/shuttle";
+const API = `${BASE}/buses/stops`;
 
 const toMin = (hhmm) => { const s = String(hhmm).padStart(4,"0"); return parseInt(s.slice(0,2),10)*60 + parseInt(s.slice(2),10); };
 const isWeekend = (d) => [0,6].includes(d.getDay());
 const cache = {};        // stopId -> { weekday:[분], weekend:[분] }
 const dayView = {};      // stopId -> 'weekday' | 'weekend' (전체 시간표에서 선택한 요일)
+const routeStops = {};   // rteId -> [{ stopId, name }]
+let routeTab = ROUTES[0].rteId;
 
 async function loadTimetable(stopId) {
   const res = await fetch(`${API}/${stopId}`, { headers:{ Accept:"application/json" }, cache:"no-store" });
@@ -113,6 +159,13 @@ async function loadTimetable(stopId) {
   const data = (d && d.data) || {};
   const map = (arr) => (arr || []).map((t) => toMin(t.time)).sort((a,b)=>a-b);
   cache[stopId] = { weekday: map(data.weekdayTimes), weekend: map(data.weekendTimes) };
+}
+
+async function loadRouteStops(rteId) {
+  const res = await fetch(`${BASE}/selectShuttleStops/?rteId=${rteId}&locale=ko_KR`, { headers:{ Accept:"application/json" }, cache:"no-store" });
+  const arr = JSON.parse(await res.text()) || [];
+  arr.sort((a,b) => parseInt(a.seq,10) - parseInt(b.seq,10));
+  routeStops[rteId] = arr.map((s) => ({ stopId: s.stopId, name: s.stopNm }));
 }
 
 // 자정 넘김/내일 첫차까지 처리한 다음 n대
@@ -141,7 +194,7 @@ function fmtWhen(dt, now) {
   return (diff >= 1 ? "내일 " : "") + `${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
 }
 
-/* ---------- 카드 뼈대 1회 생성 (details 펼침 상태 유지) ---------- */
+/* ---------- 상단 방향별 카드 (details 펼침 상태 유지) ---------- */
 function buildCards() {
   const box = document.getElementById("cards");
   box.innerHTML = "";
@@ -198,13 +251,12 @@ function renderNext(stopId, now) {
     (after ? `<div class="after">${after}</div>` : "");
 }
 
-function renderChips(stopId, now) {
-  const el = document.getElementById(`tt-${stopId}`);
+// 시간표 칩 공통 렌더 (카드: tt-*, 노선도: rtt-*)
+function renderChipsInto(el, stopId, now, segSelector) {
   if (!el || !cache[stopId]) return;
   const todayKey = isWeekend(now) ? "weekend" : "weekday";
   const key = dayView[stopId] || todayKey;
-  // 세그먼트 on/off
-  document.querySelectorAll(`.seg[data-stop="${stopId}"]`).forEach((b) =>
+  document.querySelectorAll(segSelector).forEach((b) =>
     b.classList.toggle("on", b.dataset.day === key));
   const times = cache[stopId][key];
   const isToday = key === todayKey;
@@ -220,11 +272,101 @@ function renderChips(stopId, now) {
     return `<span class="${cls}">${fmtMin(tot)}</span>`;
   }).join("");
 }
+const renderChips = (stopId, now) =>
+  renderChipsInto(document.getElementById(`tt-${stopId}`), stopId, now, `.seg[data-stop="${stopId}"]:not(.rseg)`);
+const renderRouteChips = (stopId, now) =>
+  renderChipsInto(document.getElementById(`rtt-${stopId}`), stopId, now, `.rseg[data-stop="${stopId}"]`);
+
+/* ---------- 노선도 탭 ---------- */
+function buildTabs() {
+  const box = document.getElementById("rtabs");
+  box.innerHTML = "";
+  for (const r of ROUTES) {
+    const b = document.createElement("button");
+    b.className = "rtab" + (r.rteId === routeTab ? " on" : "");
+    b.textContent = r.label;
+    b.addEventListener("click", () => {
+      routeTab = r.rteId;
+      box.querySelectorAll(".rtab").forEach((t) => t.classList.toggle("on", t.textContent === r.label));
+      buildRouteBoard();
+    });
+    box.appendChild(b);
+  }
+}
+
+function buildRouteBoard() {
+  const box = document.getElementById("routeBoard");
+  const route = ROUTES.find((r) => r.rteId === routeTab);
+  const stops = routeStops[routeTab];
+  if (!stops) { box.innerHTML = `<div class="err">정류장 목록을 불러오지 못했습니다. 새로고침을 눌러주세요.</div>`; return; }
+  box.innerHTML = "";
+  for (const s of stops) {
+    const onB = route.board.includes(s.stopId);
+    const offB = route.alight.includes(s.stopId);
+    const row = document.createElement("div");
+    row.className = "stoprow" + (onB ? " on-board" : "") + (offB ? " off-board" : "");
+    row.dataset.stop = s.stopId;
+    row.innerHTML =
+      `<div class="rail"><span class="dot"></span></div>` +
+      `<div class="rinfo">` +
+        `<div class="nmline"><span class="nm">${s.name}</span>` +
+        (onB ? `<span class="badge">타는 곳</span>` : "") +
+        (offB ? `<span class="badge off">내리는 곳</span>` : "") + `</div>` +
+        `<div class="rnext" id="rnext-${s.stopId}">…</div>` +
+        `<div class="rexpand">` +
+          `<div class="ttbar">` +
+            `<button class="seg rseg" data-day="weekday" data-stop="${s.stopId}">평일</button>` +
+            `<button class="seg rseg" data-day="weekend" data-stop="${s.stopId}">주말·공휴일</button>` +
+          `</div>` +
+          `<div class="chips" id="rtt-${s.stopId}"></div>` +
+        `</div>` +
+      `</div>`;
+    row.addEventListener("click", async () => {
+      row.classList.toggle("open");
+      if (!row.classList.contains("open")) return;
+      // 시간표는 처음 펼칠 때만 수신 (첫 로딩을 가볍게)
+      if (!cache[s.stopId]) {
+        try { await loadTimetable(s.stopId); }
+        catch (e) { document.getElementById(`rnext-${s.stopId}`).textContent = "시간표 불러오기 실패"; return; }
+      }
+      const now = new Date();
+      renderRouteNext(s.stopId, now);
+      renderRouteChips(s.stopId, now);
+    });
+    box.appendChild(row);
+  }
+  // 요일 토글 (행 접힘 방지 위해 클릭 전파 차단)
+  box.querySelectorAll(".rseg").forEach((b) => {
+    b.addEventListener("click", (e) => {
+      e.stopPropagation();
+      dayView[b.dataset.stop] = b.dataset.day;
+      renderRouteChips(b.dataset.stop, new Date());
+    });
+  });
+}
+
+function renderRouteNext(stopId, now) {
+  const el = document.getElementById(`rnext-${stopId}`);
+  if (!el) return;
+  if (!cache[stopId]) { el.textContent = "시간표 불러오는 중…"; return; }
+  const nx = nextBuses(stopId, now, 2);
+  if (!nx.length) { el.textContent = "운행 정보 없음"; return; }
+  const etaMin = Math.round((nx[0] - now) / 60000);
+  const etaTxt = etaMin <= 1 ? "곧 도착" : `${etaMin}분 후`;
+  const warn = etaMin <= 3 ? "" : "warn";
+  const after = nx[1] ? ` · 다음 ${fmtWhen(nx[1], now)}` : "";
+  el.innerHTML = `<b>${fmtWhen(nx[0], now)}</b> <span class="eta ${warn}">${etaTxt}</span>${after}`;
+}
 
 function tick() {
   const now = new Date();
   document.getElementById("dayType").textContent = "오늘: " + (isWeekend(now) ? "주말·공휴일" : "평일");
   for (const s of STOPS) { renderNext(s.stopId, now); renderChips(s.stopId, now); }
+  // 노선도는 펼쳐진 행만 갱신
+  document.querySelectorAll("#routeBoard .stoprow.open").forEach((row) => {
+    renderRouteNext(row.dataset.stop, now);
+    renderRouteChips(row.dataset.stop, now);
+  });
   document.getElementById("updated").textContent =
     "갱신 " + now.toLocaleTimeString("ko-KR", { hour:"2-digit", minute:"2-digit" });
 }
@@ -232,14 +374,20 @@ function tick() {
 async function reload() {
   const btn = document.getElementById("refresh");
   btn.disabled = true; btn.textContent = "불러오는 중…";
-  try { await Promise.all(STOPS.map((s) => loadTimetable(s.stopId))); }
+  try {
+    const jobs = STOPS.map((s) => loadTimetable(s.stopId));
+    if (!routeStops[routeTab]) jobs.push(...ROUTES.map((r) => loadRouteStops(r.rteId).catch(() => {})));
+    await Promise.all(jobs);
+  }
   catch (e) { document.getElementById("updated").textContent = "불러오기 실패: " + (e.message || e); }
+  if (!document.querySelector("#routeBoard .stoprow")) buildRouteBoard();
   btn.disabled = false; btn.textContent = "새로고침";
   tick();
 }
 
 document.getElementById("refresh").addEventListener("click", reload);
 buildCards();
+buildTabs();
 reload();
 setInterval(tick, 30 * 1000);              // 30초마다 카운트다운/시간표 하이라이트 갱신
 setInterval(reload, 6 * 60 * 60 * 1000);   // 6시간마다 시간표 재수신
