@@ -91,6 +91,8 @@
   .stoprow.on-board .nm, .stoprow.off-board .nm { font-weight:800; }
   .badge { font-size:10.5px; font-weight:700; color:var(--onAccent); background:var(--accent); border-radius:5px; padding:1px 6px; }
   .badge.off { background:var(--soon); color:#08130d; }
+  .maplink { font-size:11px; font-weight:600; color:var(--accent); text-decoration:none;
+             border:1px solid var(--line); border-radius:5px; padding:1px 7px; }
   .rnext { display:none; font-size:12.5px; color:var(--muted); margin-top:2px; font-variant-numeric:tabular-nums; }
   .stoprow.on-board .rnext, .stoprow.open .rnext { display:block; }  /* 도착 예정은 타는 곳만 상시 표시, 나머지는 펼쳤을 때 */
   .rnext b { color:var(--fg); font-size:14px; font-weight:800; }
@@ -119,7 +121,8 @@
   <div class="board" id="routeBoard"><div class="err">정류장 불러오는 중…</div></div>
 
   <footer>
-    시간표 기준(실시간 GPS 아님) · 자정 이후 편·내일 첫차까지 반영 · 평일/주말 자동 구분.<br />
+    시간표 기준(실시간 GPS 아님) · 자정 이후 편·내일 첫차까지 반영 · 평일/주말·공휴일 자동 구분.<br />
+    "지도" 링크는 카카오맵으로 열리며 위치는 대략적입니다(터미널은 건물 앞 기준 — 3층 출입구 번호는 현장 안내판 참조).<br />
     🚌 위치는 "앞 정류장을 지났고 다음 정류장 도착 전"인 구간을 시간표로 추정한 것 — 실제와 다를 수 있습니다.<br />
     공항03은 같은 버스가 3층 3번을 먼저, 3층 12번을 다음에 지나갑니다. 가까운 문에서 타세요.
   </footer>
@@ -151,6 +154,28 @@ const ROUTES = [
   { rteId: "00003", label: "공항04", board: ["00003013"], alight: ["00003015"] },
 ];
 const SEG_MAX_MIN = 20;  // 정류장 간 이동시간 상한(분) — 넘으면 종착/운행공백으로 보고 🚌 표시 안 함
+
+// 지도 링크용 좌표(OSM 기준, 대략적 위치) — 확실히 확인된 정류장만. API에는 좌표가 없음.
+// 여객터미널은 건물 앞 핀(3층 출입구 위치는 현장 안내판이 기준).
+const COORDS = {
+  "00003013": [37.43931, 126.46157],  // 국제업무단지(공항청사 앞)
+  "00002012": [37.43931, 126.46157],
+  "00002009": [37.44852, 126.45128],  // 제1여객터미널
+  "00002010": [37.44852, 126.45128],
+  "00003015": [37.44852, 126.45128],
+  "00002011": [37.44097, 126.45691],  // 하얏트호텔
+  "00003014": [37.44097, 126.45691],
+  "00002013": [37.43934, 126.46357],  // 인하국제의료센터
+  "00002007": [37.46832, 126.43371],  // 제2여객터미널
+  "00003017": [37.46832, 126.43371],
+  "00002002": [37.47980, 126.41705],  // 장기탑승장1(주차구역 B,C)
+  "00002003": [37.47938, 126.41952],  // 장기탑승장2(주차구역 C,D)
+  "00002004": [37.48344, 126.41423],  // 장기탑승장3(남측주차타워)
+  "00002005": [37.48376, 126.41396],  // 장기탑승장4(북측주차타워)
+  "00002006": [37.48176, 126.41580],  // 장기탑승장5(주차구역A)
+};
+// 카카오맵 링크는 "이름,위도,경도" 형식 — 이름 속 쉼표는 구분자와 충돌하므로 제거
+const mapUrl = (name, c) => `https://map.kakao.com/link/map/${encodeURIComponent(("공항셔틀 " + name).replace(/,/g, " "))},${c[0]},${c[1]}`;
 const BASE = "https://icnplus.airport.kr:11040/api/transportation/shuttle";
 const API = `${BASE}/buses/stops`;
 
@@ -261,7 +286,9 @@ function buildCards() {
       c.className = "card";
       c.innerHTML =
         `<div class="route">${s.route}</div>` +
-        `<div class="stop">${s.name}</div>` +
+        `<div class="stop">${s.name}` +
+        (COORDS[s.stopId] ? ` <a class="maplink" href="${mapUrl(s.name, COORDS[s.stopId])}" target="_blank" rel="noopener">지도</a>` : "") +
+        `</div>` +
         `<div class="dir">${s.dir}</div>` +
         `<div id="next-${s.stopId}"></div>` +
         `<details>` +
@@ -362,7 +389,8 @@ function buildRouteBoard() {
       `<div class="rinfo">` +
         `<div class="nmline"><span class="nm"></span>` +
         (onB ? `<span class="badge">타는 곳</span>` : "") +
-        (offB ? `<span class="badge off">내리는 곳</span>` : "") + `</div>` +
+        (offB ? `<span class="badge off">내리는 곳</span>` : "") +
+        (COORDS[s.stopId] ? `<a class="maplink" href="${mapUrl(s.name, COORDS[s.stopId])}" target="_blank" rel="noopener">지도</a>` : "") + `</div>` +
         `<div class="rnext" id="rnext-${s.stopId}">…</div>` +
         `<div class="rexpand">` +
           `<div class="ttbar">` +
@@ -387,6 +415,8 @@ function buildRouteBoard() {
       renderRouteChips(b.dataset.stop, new Date());
     });
   });
+  // 지도 링크는 행 펼침과 무관하게 동작
+  box.querySelectorAll(".maplink").forEach((a) => a.addEventListener("click", (e) => e.stopPropagation()));
 }
 
 function renderRouteNext(stopId, now) {
