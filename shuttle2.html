@@ -38,6 +38,8 @@
   button { background:var(--accent); color:var(--onAccent); border:0; border-radius:8px; padding:8px 14px; font-size:14px; font-weight:600; cursor:pointer; }
   .updated { color:var(--muted); font-size:12px; margin-left:auto; }
   .ghead { font-size:17px; font-weight:800; margin:26px 0 4px; padding:2px 0 2px 10px; border-left:4px solid var(--accent); }
+  .ghead .routepill { display:inline-block; background:var(--accent); color:var(--onAccent); border-radius:7px;
+                      padding:2px 10px; font-size:14px; font-weight:800; margin-left:8px; vertical-align:1px; white-space:nowrap; }
   .ghead:first-child { margin-top:0; }
   .gnote { font-size:12px; color:var(--muted); margin:0 0 10px; padding-left:14px; }
   .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:16px 18px; margin-bottom:14px; }
@@ -132,6 +134,7 @@
 const GROUPS = [
   {
     title: "① 제1합동청사 → 제1터미널",
+    bus: "공항04번 탑승",
     note: "주차 후 터미널 갈 때 · 국제업무단지 정류장에서 탑승 (합동청사에서 길 건너지 않는 쪽)",
     stops: [
       { route: "공항04", name: "국제업무단지", stopId: "00003013", dir: "→ 제1터미널 방향 (3층 8번 하차)" },
@@ -139,6 +142,7 @@ const GROUPS = [
   },
   {
     title: "② 제1터미널 → 제1합동청사",
+    bus: "공항03번 탑승",
     note: "돌아갈 때 · 3층 3번·12번 중 가까운 곳에서 탑승, 국제업무단지 하차",
     stops: [
       { route: "공항03", name: "제1터미널 3층 3번",  stopId: "00002009", dir: "→ 국제업무단지(제1합동청사) 방향" },
@@ -277,6 +281,12 @@ function buildCards() {
     const h = document.createElement("div");
     h.className = "ghead";
     h.textContent = g.title;
+    if (g.bus) {
+      const p = document.createElement("span");
+      p.className = "routepill";
+      p.textContent = g.bus;
+      h.appendChild(p);
+    }
     box.appendChild(h);
     const n = document.createElement("p");
     n.className = "gnote";
